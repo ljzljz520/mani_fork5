@@ -190,8 +190,35 @@ func SyncWorktrees(config *dao.Config, project dao.Project, removeOrphans bool) 
 		}
 		expectedPaths[wtPath] = true
 
-		// Create worktree if it doesn't exist
-		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		if _, statErr := os.Stat(wtPath); statErr == nil {
+			// Directory already exists: do not treat mere existence as
+			// ownership. Verify it is a linked worktree checked out from
+			// this project instead of silently skipping it (it could be
+			// a standalone repository or a worktree of another repo).
+			ownerReal, err := core.ResolveRealPath(parentPath)
+			if err != nil {
+				return err
+			}
+			wtReal, err := core.ResolveRealPath(wtPath)
+			if err != nil {
+				return err
+			}
+
+			target := dao.PathTarget{
+				Kind:          dao.TargetKindWorktree,
+				ProjectName:   project.Name,
+				Worktree:      wt,
+				Path:          wtPath,
+				RealPath:      wtReal,
+				OwnerRealPath: ownerReal,
+				Source:        wt.GetContext(),
+				Line:          wt.GetContextLine(),
+			}
+			if conflicts := dao.VerifyExistingWorktrees([]dao.PathTarget{target}); len(conflicts) > 0 {
+				return &core.PathConflictError{Conflicts: conflicts}
+			}
+		} else if os.IsNotExist(statErr) {
+			// Create worktree if it doesn't exist.
 			// Try checking out existing branch first (local or remote-tracking)
 			err = CreateWorktree(parentPath, wtPath, wt.Branch, false)
 			if err != nil {
@@ -201,6 +228,8 @@ func SyncWorktrees(config *dao.Config, project dao.Project, removeOrphans bool) 
 			if err != nil {
 				return err
 			}
+		} else {
+			return statErr
 		}
 	}
 

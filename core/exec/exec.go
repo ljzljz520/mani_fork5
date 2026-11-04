@@ -136,6 +136,16 @@ func (exec *Exec) SetClients(
 	ignoreNonExisting := exec.Tasks[0].SpecData.IgnoreNonExisting
 	projects := exec.Projects
 
+	// Path ownership preflight (shared by run, exec and TUI): refuse to
+	// run when two selected targets resolve to the same physical working
+	// directory, which would execute the task multiple times in the same
+	// place. Checked against the final, post-filter project list so
+	// replaced/overridden targets use the same identity determination.
+	err := dao.CheckPathOwnership(config.Dir, projects, false, false)
+	if err != nil {
+		return err
+	}
+
 	var clients []Client
 	for i, project := range projects {
 		func(i int, project dao.Project) {

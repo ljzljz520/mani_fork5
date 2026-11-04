@@ -128,6 +128,14 @@ func runSync(
 	core.CheckIfError(err)
 
 	if !syncFlags.Status {
+		// Path ownership preflight over the WHOLE config (gitignore sync
+		// iterates every project regardless of filters): report every
+		// working-directory conflict and verify on-disk ownership of
+		// existing worktrees before touching .gitignore, remotes or
+		// worktrees.
+		err := dao.CheckPathOwnership(config.Dir, config.ProjectList, true, true)
+		core.CheckIfError(err)
+
 		if setSyncFlags.SyncRemotes {
 			config.SyncRemotes = &syncFlags.SyncRemotes
 		}

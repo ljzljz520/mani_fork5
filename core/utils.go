@@ -138,6 +138,44 @@ func GetAbsolutePath(configDir string, path string, name string) (string, error)
 	return path, nil
 }
 
+// ResolveRealPath returns the physical location a path points to:
+// it lexically cleans the path (resolving "." and "..") and evaluates
+// symlinks on the longest existing prefix, then re-appends the
+// not-yet-created remainder. This makes paths that do not exist yet
+// (projects waiting to be cloned, worktrees waiting to be created)
+// compare by their intended physical directory instead of spelling:
+// "a", "./a/", "a/../a" or a symlinked parent alias all resolve alike.
+func ResolveRealPath(path string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+
+	return resolveExistingPrefix(abs)
+}
+
+// resolveExistingPrefix resolves symlinks for the existing prefix of
+// abs, re-appending the missing tail while unwinding the recursion.
+func resolveExistingPrefix(abs string) (string, error) {
+	if _, err := filepath.EvalSymlinks(abs); err == nil {
+		// Fast path: the whole path exists (EvalSymlinks fails otherwise).
+		return filepath.EvalSymlinks(abs)
+	}
+
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		// Reached the filesystem root.
+		return abs, nil
+	}
+
+	realParent, err := resolveExistingPrefix(parent)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(realParent, filepath.Base(abs)), nil
+}
+
 // Get the absolute path
 // Need to support following path types:
 //

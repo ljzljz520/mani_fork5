@@ -191,10 +191,111 @@ func (f *ConfigErr) Error() string {
 	return f.Msg
 }
 
+// Path ownership preflight conflict reasons.
+const (
+	// Two or more config targets resolve to the same working directory.
+	PathConflictDuplicate = "duplicate-working-dir"
+	// An existing worktree directory contains a standalone .git directory
+	// instead of a linked worktree pointer.
+	PathConflictForeignRepository = "foreign-repository"
+	// An existing worktree directory is a linked worktree of another
+	// repository (its administrative dir does not belong to the owner).
+	PathConflictForeignWorktree = "foreign-worktree"
+	// An existing worktree directory is not a git checkout at all.
+	PathConflictNotCheckout = "not-a-checkout"
+	// A worktree .git pointer or its administrative metadata is malformed
+	// or points somewhere else.
+	PathConflictInvalidWorktree = "invalid-worktree-pointer"
+)
+
+// PathClaim describes a single config entity that claims a working
+// directory (a project or one of its worktrees) along with the config
+// file it originates from.
+type PathClaim struct {
+	Kind string // "project" | "worktree"
+
+	ProjectName  string
+	WorktreePath string
+	Branch       string
+
+	// Configured (lexically cleaned, not symlink-resolved) absolute path.
+	Path string
+
+	// Config file the entity originates from (provenance).
+	Source string
+	Line   int
+}
+
+// PathConflict describes a single path ownership violation. Claims always
+// contains every config entity involved so the full set of conflicts can
+// be reported at once.
+type PathConflict struct {
+	// RealPath is the symlink-resolved working directory.
+	RealPath string
+
+	Reason  string
+	Message string
+	Claims  []PathClaim
+}
+
+type PathConflictError struct {
+	Conflicts []PathConflict
+}
+
+func formatPathClaim(c PathClaim) string {
+	if c.Kind == "worktree" {
+		return fmt.Sprintf(
+			"worktree `%s` (branch `%s`) of project `%s` resolves to `%s`",
+			c.WorktreePath,
+			c.Branch,
+			c.ProjectName,
+			c.Path,
+		)
+	}
+
+	return fmt.Sprintf("project `%s` resolves to `%s`", c.ProjectName, c.Path)
+}
+
+func (e *PathConflictError) Error() string {
+	var b strings.Builder
+
+	errPrefix := color.FgRed.Sprintf("error")
+	ptrPrefix := color.FgBlue.Sprintf("-->")
+
+	for i, conflict := range e.Conflicts {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+
+		if conflict.Reason == PathConflictDuplicate {
+			fmt.Fprintf(&b, "%s: %s `%s`\n", errPrefix, conflict.Message, conflict.RealPath)
+		} else {
+			fmt.Fprintf(&b, "%s: %s\n", errPrefix, conflict.Message)
+			if conflict.RealPath != "" {
+				fmt.Fprintf(&b, "           working directory `%s`\n", conflict.RealPath)
+			}
+		}
+
+		for _, claim := range conflict.Claims {
+			if claim.Source != "" {
+				if claim.Line > 0 {
+					fmt.Fprintf(&b, "  %s %s:%d\n", ptrPrefix, claim.Source, claim.Line)
+				} else {
+					fmt.Fprintf(&b, "  %s %s\n", ptrPrefix, claim.Source)
+				}
+			}
+
+			fmt.Fprintf(&b, "    %s\n", formatPathClaim(claim))
+		}
+	}
+
+	return b.String()
+}
+
 func CheckIfError(err error) {
 	if err != nil {
 		switch err.(type) {
-		case *ConfigErr:
+		case *ConfigErr, *PathConflictError:
 			// Errors are already mapped with `error:` prefix
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
@@ -207,9 +308,9 @@ func CheckIfError(err error) {
 
 func Exit(err error) {
 	switch err := err.(type) {
-	case *ConfigErr:
+	case *ConfigErr, *PathConflictError:
 		// Errors are already mapped with `error:` prefix
-		fmt.Fprintf(os.Stderr, "%v", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	default:
 		fmt.Fprintf(os.Stderr, "%s: %v\n", color.FgRed.Sprintf("error"), err)

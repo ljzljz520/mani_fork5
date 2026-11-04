@@ -45,6 +45,18 @@ type Remote struct {
 type Worktree struct {
 	Path   string `yaml:"path"`
 	Branch string `yaml:"branch"`
+
+	// Config provenance (which config file/line the worktree was defined in).
+	context     string
+	contextLine int
+}
+
+func (w Worktree) GetContext() string {
+	return w.context
+}
+
+func (w Worktree) GetContextLine() int {
+	return w.contextLine
 }
 
 func (p *Project) GetContext() string {
@@ -150,6 +162,13 @@ func (c *Config) GetProjectList() ([]Project, []ResourceErrors[Project]) {
 			projectError := ResourceErrors[Project]{Resource: project, Errors: []error{err}}
 			projectErrors = append(projectErrors, projectError)
 			continue
+		}
+		// Preserve config provenance for each worktree target.
+		for i := range projectWorktrees {
+			projectWorktrees[i].context = project.context
+			if i < len(project.Worktrees.Content) {
+				projectWorktrees[i].contextLine = project.Worktrees.Content[i].Line
+			}
 		}
 		project.WorktreeList = projectWorktrees
 
